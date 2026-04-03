@@ -47,26 +47,21 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          PROMPT="You are a senior software engineering lead reviewing the current sprint.
+          PROMPT="You are a senior software engineering lead. For each task below, write a SHORT review card using this exact format:
 
-          The following tasks are currently in the Review state in our project management board.
-          For each task, provide a detailed technical breakdown that includes:
+          ### [Task name]
+          **What:** One sentence max.
+          **Steps:** Max 3 bullet points, one line each.
+          **Risk:** One line only.
+          **Done when:** One line only.
 
-          1. Task Summary - A clear 1-2 sentence description of what this task involves.
-          2. Implementation Steps - Step-by-step technical instructions on how this was implemented.
-          3. Files/Components Likely Affected - Predict which files, modules, or components are involved.
-          4. Testing Checklist - List of things a reviewer should verify before approving.
-          5. Potential Risks or Edge Cases - Flag anything that could break or needs extra attention.
-          6. Definition of Done - Clear criteria for when this task is truly complete.
+          Be very concise. No long paragraphs. Each card should be readable in 10 seconds.
 
-          Here are the tasks currently in review:
-
+          Tasks:
           $FULL_TASKS"
 
-          # Escape the prompt for JSON
           ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
 
-          # Call Groq API via curl
           GROQ_RESPONSE=$(curl -s \
             -X POST \
             "https://api.groq.com/openai/v1/chat/completions" \
@@ -75,12 +70,11 @@ jobs:
             -d "{
               \"model\": \"llama-3.3-70b-versatile\",
               \"messages\": [{\"role\": \"user\", \"content\": $ESCAPED_PROMPT}],
-              \"max_tokens\": 4096
+              \"max_tokens\": 2048
             }")
 
           echo "Groq response received."
 
-          # Extract the text from the response
           REPORT=$(echo "$GROQ_RESPONSE" | jq -r '.choices[0].message.content')
 
           if [ -z "$REPORT" ] || [ "$REPORT" = "null" ]; then
@@ -90,8 +84,8 @@ jobs:
           fi
 
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          FULL_REPORT="# Sprint Review Report
-          _Generated on: ${TIMESTAMP}_
+          FULL_REPORT="# Sprint Review — $(date -u +"%d %b %Y")
+          _Generated: ${TIMESTAMP}_
 
           ${REPORT}"
 
@@ -108,6 +102,6 @@ jobs:
 
       - name: Post Report as GitHub Actions Summary
         run: |
-          echo "## Sprint Review Report" >> $GITHUB_STEP_SUMMARY
+          echo "## Sprint Review — $(date -u +"%d %b %Y")" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cat sprint-review-report.md >> $GITHUB_STEP_SUMMARY
