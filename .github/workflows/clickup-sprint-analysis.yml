@@ -1,0 +1,137 @@
+name: ClickUp Sprint Task Analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze-sprint-tasks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch tasks in Review state from ClickUp
+        id: fetch_tasks
+        env:
+          CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
+          CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
+        run: |
+          echo "Fetching tasks in 'review' state from ClickUp..."
+
+          RESPONSE=$(curl --get -s \
+            --url "https://api.clickup.com/api/v2/list/${CLICKUP_LIST_ID}/task" \
+            --header "Authorization: ${CLICKUP_TOKEN}" \
+            --data-urlencode "statuses[]=review")
+
+          echo "Raw response received."
+
+          # Extract task names
+          TASK_NAMES=$(echo "$RESPONSE" | jq -r '[.tasks[].name] | join("\n- ")')
+
+          if [ -z "$TASK_NAMES" ]; then
+            echo "No tasks found in review state."
+            exit 1
+          fi
+
+          TASK_LIST="- $TASK_NAMES"
+          echo "Tasks found:"
+          echo "$TASK_LIST"
+
+          # Save to env for next step
+          echo "TASK_LIST<<EOF" >> $GITHUB_ENV
+          echo "$TASK_LIST" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          # Also extract full task details (name + description) for richer context
+          FULL_TASKS=$(echo "$RESPONSE" | jq -r '.tasks[] | "Task: \(.name)\nDescription: \(.description // "No description")\nAssignees: \([.assignees[]?.username] | join(", "))\nPriority: \(.priority.priority // "none")\n---"')
+
+          echo "FULL_TASKS<<EOF" >> $GITHUB_ENV
+          echo "$FULL_TASKS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Anthropic SDK
+        run: npm install @anthropic-ai/sdk
+
+      - name: Analyze tasks with Claude AI
+        id: claude_analysis
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TASK_LIST: ${{ env.TASK_LIST }}
+          FULL_TASKS: ${{ env.FULL_TASKS }}
+        run: |
+          cat << 'EOF' > analyze.mjs
+          import Anthropic from "@anthropic-ai/sdk";
+          import fs from "fs";
+
+          const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+          const taskList = process.env.FULL_TASKS || process.env.TASK_LIST;
+
+          const prompt = `You are a senior software engineering lead reviewing the current sprint.
+
+          The following tasks are currently in the "Review" state in our project management board. 
+          For each task, provide a detailed technical breakdown that includes:
+
+          1. **Task Summary** – A clear 1-2 sentence description of what this task involves.
+          2. **Implementation Steps** – Step-by-step technical instructions on how this was (or should be) implemented.
+          3. **Files/Components Likely Affected** – Predict which files, modules, or components are involved.
+          4. **Testing Checklist** – List of things a reviewer should verify before approving.
+          5. **Potential Risks or Edge Cases** – Flag anything that could break or needs extra attention.
+          6. **Definition of Done** – Clear criteria for when this task is truly complete.
+
+          Format the output as a clean Markdown report titled "Sprint Review Report".
+
+          Here are the tasks currently in review:
+
+          ${taskList}
+
+          Provide a thorough, developer-ready breakdown for each task.`;
+
+          const message = await client.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 4096,
+            messages: [{ role: "user", content: prompt }],
+          });
+
+          const report = message.content[0].text;
+
+          // Add timestamp header
+          const timestamp = new Date().toISOString();
+          const fullReport = `# Sprint Review Report\n_Generated on: ${timestamp}_\n\n${report}`;
+
+          fs.writeFileSync("sprint-review-report.md", fullReport);
+          console.log("Report generated successfully.");
+          console.log(fullReport);
+          EOF
+
+          node analyze.mjs
+
+      - name: Upload Sprint Report as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprint-review-report
+          path: sprint-review-report.md
+          retention-days: 30
+
+      - name: Post Report as GitHub Actions Summary
+        run: |
+          echo "## 🚀 Sprint Review Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat sprint-review-report.md >> $GITHUB_STEP_SUMMARY
+
+      # Optional: Post report as a comment on a GitHub Issue or PR
+      # Uncomment below and set REPORT_ISSUE_NUMBER secret if you want this
+      #
+      # - name: Post report to GitHub Issue
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     ISSUE_NUMBER: ${{ secrets.REPORT_ISSUE_NUMBER }}
+      #   run: |
+      #     BODY=$(cat sprint-review-report.md)
+      #     gh issue comment $ISSUE_NUMBER --body "$BODY"
