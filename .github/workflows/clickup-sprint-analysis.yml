@@ -42,10 +42,10 @@ jobs:
           echo "$FULL_TASKS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Analyze tasks with Gemini AI
-        id: gemini_analysis
+      - name: Analyze tasks with Groq AI
+        id: groq_analysis
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           PROMPT="You are a senior software engineering lead reviewing the current sprint.
 
@@ -66,22 +66,26 @@ jobs:
           # Escape the prompt for JSON
           ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
 
-          # Call Gemini API using x-goog-api-key header (correct per official docs)
-          GEMINI_RESPONSE=$(curl -s \
+          # Call Groq API via curl
+          GROQ_RESPONSE=$(curl -s \
             -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent" \
+            "https://api.groq.com/openai/v1/chat/completions" \
+            -H "Authorization: Bearer ${GROQ_API_KEY}" \
             -H "Content-Type: application/json" \
-            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-            -d "{\"contents\":[{\"parts\":[{\"text\":$ESCAPED_PROMPT}]}]}")
+            -d "{
+              \"model\": \"llama-3.3-70b-versatile\",
+              \"messages\": [{\"role\": \"user\", \"content\": $ESCAPED_PROMPT}],
+              \"max_tokens\": 4096
+            }")
 
-          echo "Gemini response received."
+          echo "Groq response received."
 
           # Extract the text from the response
-          REPORT=$(echo "$GEMINI_RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
+          REPORT=$(echo "$GROQ_RESPONSE" | jq -r '.choices[0].message.content')
 
           if [ -z "$REPORT" ] || [ "$REPORT" = "null" ]; then
             echo "Error: No report generated. Full response:"
-            echo "$GEMINI_RESPONSE"
+            echo "$GROQ_RESPONSE"
             exit 1
           fi
 
