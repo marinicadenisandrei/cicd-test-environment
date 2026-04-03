@@ -114,8 +114,9 @@ jobs:
         env:
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_APP_PASS: ${{ secrets.SMTP_APP_PASS }}
-          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          NOTIFY_EMAILS: ${{ secrets.NOTIFY_EMAILS }}
           REPORT_DATE: ${{ env.REPORT_DATE }}
+          PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
         run: |
           pip install markdown --break-system-packages --quiet
 
@@ -126,43 +127,116 @@ jobs:
           from email.mime.multipart import MIMEMultipart
           from email.mime.text import MIMEText
 
-          smtp_email  = os.environ["SMTP_EMAIL"].strip()
-          smtp_pass   = os.environ["SMTP_APP_PASS"].strip()
-          notify_email = os.environ["NOTIFY_EMAIL"].strip()
-          report_date = os.environ.get("REPORT_DATE", "Sprint Review")
+          smtp_email   = os.environ["SMTP_EMAIL"].strip()
+          smtp_pass    = os.environ["SMTP_APP_PASS"].strip()
+          notify_emails = [e.strip() for e in os.environ["NOTIFY_EMAILS"].split(",") if e.strip()]
+          report_date  = os.environ.get("REPORT_DATE", "Sprint Review")
+          platform_name = os.environ.get("PLATFORM_NAME", "Platform").strip()
 
           with open("sprint-review-report.md", "r") as f:
               md_content = f.read()
 
+          # Convert markdown task cards to styled HTML cards
           html_content = markdown.markdown(md_content, extensions=["extra"])
 
-          html_body = f"""
+          # Replace <h3> with styled task cards
+          import re
+
+          def make_card(match):
+              title = match.group(1).strip()
+              return f'''
+              <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 24px;margin-bottom:16px;border-left:4px solid #6366f1;">
+                <h3 style="margin:0 0 12px;font-size:15px;font-weight:600;color:#1e1b4b;">{title}</h3>
+              '''
+
+          html_content = re.sub(r'<h3>(.*?)</h3>', make_card, html_content, flags=re.DOTALL)
+          html_content = html_content.replace('<hr>', '</div>')
+
+          # Count tasks
+          task_count = len(re.findall(r'Task:', open("sprint-review-report.md").read()))
+
+          html_body = f"""<!DOCTYPE html>
           <html>
-          <body style="font-family: Arial, sans-serif; max-width: 700px; margin: auto; padding: 24px; color: #1a1a1a;">
-            <div style="border-left: 4px solid #4f46e5; padding-left: 16px; margin-bottom: 24px;">
-              <h1 style="margin: 0; font-size: 20px; color: #4f46e5;">Sprint Review Report</h1>
-              <p style="margin: 4px 0 0; font-size: 13px; color: #6b7280;">{report_date}</p>
-            </div>
-            <div style="line-height: 1.7; font-size: 15px;">
-              {html_content}
-            </div>
-            <hr style="margin-top: 32px; border: none; border-top: 1px solid #e5e7eb;">
-            <p style="font-size: 12px; color: #9ca3af;">Generated automatically by GitHub Actions · ClickUp Sprint Analysis</p>
+          <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+          <body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;">
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 0;">
+              <tr><td align="center">
+                <table width="620" cellpadding="0" cellspacing="0" style="max-width:620px;width:100%;">
+
+                  <!-- Header -->
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);border-radius:16px 16px 0 0;padding:36px 40px;text-align:center;">
+                      <p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:2px;color:#c4b5fd;text-transform:uppercase;">{platform_name} Platform</p>
+                      <h1 style="margin:0 0 8px;font-size:26px;font-weight:700;color:#ffffff;">New Release</h1>
+                      <p style="margin:0;font-size:14px;color:#ddd6fe;">Sprint tasks ready for review &mdash; {report_date}</p>
+                    </td>
+                  </tr>
+
+                  <!-- Stats bar -->
+                  <tr>
+                    <td style="background:#4338ca;padding:14px 40px;">
+                      <table width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="text-align:center;border-right:1px solid #6366f1;padding:0 16px;">
+                            <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">{task_count}</p>
+                            <p style="margin:2px 0 0;font-size:11px;color:#a5b4fc;text-transform:uppercase;letter-spacing:1px;">Tasks</p>
+                          </td>
+                          <td style="text-align:center;border-right:1px solid #6366f1;padding:0 16px;">
+                            <p style="margin:0;font-size:22px;font-weight:700;color:#34d399;">&#10003;</p>
+                            <p style="margin:2px 0 0;font-size:11px;color:#a5b4fc;text-transform:uppercase;letter-spacing:1px;">In Review</p>
+                          </td>
+                          <td style="text-align:center;padding:0 16px;">
+                            <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">{report_date}</p>
+                            <p style="margin:2px 0 0;font-size:11px;color:#a5b4fc;text-transform:uppercase;letter-spacing:1px;">Date</p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- Body -->
+                  <tr>
+                    <td style="background:#f8fafc;padding:32px 40px;">
+
+                      <p style="margin:0 0 24px;font-size:14px;color:#475569;line-height:1.6;">
+                        Hello team, <br><br>
+                        A new <strong style="color:#4f46e5;">{platform_name}</strong> release is ready. Below is the AI-generated sprint review summary for all tasks currently in the <strong>Review</strong> state. Please check each card before merging.
+                      </p>
+
+                      <!-- Task cards -->
+                      {html_content}
+
+                    </td>
+                  </tr>
+
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background:#1e1b4b;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;">
+                      <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#a5b4fc;">{platform_name} Engineering</p>
+                      <p style="margin:0;font-size:11px;color:#6366f1;">Generated automatically by GitHub Actions &middot; ClickUp Sprint Analysis</p>
+                    </td>
+                  </tr>
+
+                </table>
+              </td></tr>
+            </table>
+
           </body>
-          </html>
-          """
+          </html>"""
 
-          msg = MIMEMultipart("alternative")
-          msg["Subject"] = f"Sprint Review Report — {report_date}"
-          msg["From"]    = smtp_email
-          msg["To"]      = notify_email
-
-          msg.attach(MIMEText(md_content, "plain"))
-          msg.attach(MIMEText(html_body, "html"))
-
+          # Send to each recipient individually
           with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
               server.login(smtp_email, smtp_pass)
-              server.sendmail(smtp_email, notify_email, msg.as_string())
+              for recipient in notify_emails:
+                  msg = MIMEMultipart("alternative")
+                  msg["Subject"] = f"New Release — {platform_name} Sprint Review {report_date}"
+                  msg["From"]    = f"{platform_name} Engineering <{smtp_email}>"
+                  msg["To"]      = recipient
+                  msg.attach(MIMEText(md_content, "plain"))
+                  msg.attach(MIMEText(html_body, "html"))
+                  server.sendmail(smtp_email, recipient, msg.as_string())
+                  print(f"Email sent to {recipient}")
 
-          print(f"Email sent successfully to {notify_email}")
+          print(f"Done — {len(notify_emails)} email(s) sent.")
           PYEOF
