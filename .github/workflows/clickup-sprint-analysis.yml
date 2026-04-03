@@ -33,47 +33,24 @@ jobs:
             exit 1
           fi
 
-          TASK_LIST="- $TASK_NAMES"
+          FULL_TASKS=$(echo "$RESPONSE" | jq -r '.tasks[] | "Task: \(.name)\nDescription: \(.description // "No description")\nPriority: \(.priority.priority // "none")\n---"')
+
           echo "Tasks found:"
-          echo "$TASK_LIST"
-
-          echo "TASK_LIST<<EOF" >> $GITHUB_ENV
-          echo "$TASK_LIST" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-          FULL_TASKS=$(echo "$RESPONSE" | jq -r '.tasks[] | "Task: \(.name)\nDescription: \(.description // "No description")\nAssignees: \([.assignees[]?.username] | join(", "))\nPriority: \(.priority.priority // "none")\n---"')
+          echo "$FULL_TASKS"
 
           echo "FULL_TASKS<<EOF" >> $GITHUB_ENV
           echo "$FULL_TASKS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Google Gemini SDK
-        run: npm install @google/generative-ai
-
       - name: Analyze tasks with Gemini AI
         id: gemini_analysis
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TASK_LIST: ${{ env.TASK_LIST }}
-          FULL_TASKS: ${{ env.FULL_TASKS }}
         run: |
-          cat << 'EOF' > analyze.mjs
-          import { GoogleGenerativeAI } from "@google/generative-ai";
-          import fs from "fs";
+          # Build the prompt JSON safely
+          PROMPT="You are a senior software engineering lead reviewing the current sprint.
 
-          const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
-
-          const taskList = process.env.FULL_TASKS || process.env.TASK_LIST;
-
-          const prompt = `You are a senior software engineering lead reviewing the current sprint.
-
-          The following tasks are currently in the "Review" state in our project management board.
+          The following tasks are currently in the Review state in our project management board.
           For each task, provide a detailed technical breakdown that includes:
 
           1. Task Summary - A clear 1-2 sentence description of what this task involves.
@@ -83,26 +60,39 @@ jobs:
           5. Potential Risks or Edge Cases - Flag anything that could break or needs extra attention.
           6. Definition of Done - Clear criteria for when this task is truly complete.
 
-          Format the output as a clean Markdown report titled Sprint Review Report.
-
           Here are the tasks currently in review:
 
-          ${taskList}
+          $FULL_TASKS"
 
-          Provide a thorough, developer-ready breakdown for each task.`;
+          # Escape the prompt for JSON
+          ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
 
-          const result = await model.generateContent(prompt);
-          const report = result.response.text();
+          # Call Gemini API directly via curl
+          GEMINI_RESPONSE=$(curl -s \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"contents\":[{\"parts\":[{\"text\":$ESCAPED_PROMPT}]}]}")
 
-          const timestamp = new Date().toISOString();
-          const fullReport = "# Sprint Review Report\n_Generated on: " + timestamp + "_\n\n" + report;
+          echo "Gemini response received."
 
-          fs.writeFileSync("sprint-review-report.md", fullReport);
-          console.log("Report generated successfully.");
-          console.log(fullReport);
-          EOF
+          # Extract the text from the response
+          REPORT=$(echo "$GEMINI_RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
 
-          node analyze.mjs
+          if [ -z "$REPORT" ] || [ "$REPORT" = "null" ]; then
+            echo "Error: No report generated. Full response:"
+            echo "$GEMINI_RESPONSE"
+            exit 1
+          fi
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          FULL_REPORT="# Sprint Review Report
+          _Generated on: ${TIMESTAMP}_
+
+          ${REPORT}"
+
+          echo "$FULL_REPORT" > sprint-review-report.md
+          echo "Report generated successfully."
+          cat sprint-review-report.md
 
       - name: Upload Sprint Report as Artifact
         uses: actions/upload-artifact@v4
