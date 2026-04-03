@@ -47,7 +47,6 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          # Build the prompt JSON safely
           PROMPT="You are a senior software engineering lead reviewing the current sprint.
 
           The following tasks are currently in the Review state in our project management board.
@@ -67,10 +66,12 @@ jobs:
           # Escape the prompt for JSON
           ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
 
-          # Call Gemini API directly via curl
+          # Call Gemini API using x-goog-api-key header (correct per official docs)
           GEMINI_RESPONSE=$(curl -s \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}" \
+            -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent" \
             -H "Content-Type: application/json" \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
             -d "{\"contents\":[{\"parts\":[{\"text\":$ESCAPED_PROMPT}]}]}")
 
           echo "Gemini response received."
@@ -90,9 +91,9 @@ jobs:
 
           ${REPORT}"
 
-          echo "$FULL_REPORT" > sprint-review-report.md
-          echo "Report generated successfully."
-          cat sprint-review-report.md
+                    echo "$FULL_REPORT" > sprint-review-report.md
+                    echo "Report generated successfully."
+                    cat sprint-review-report.md
 
       - name: Upload Sprint Report as Artifact
         uses: actions/upload-artifact@v4
